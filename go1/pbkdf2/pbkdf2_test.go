@@ -58,18 +58,18 @@ func TestKeyGen(t *testing.T) {
 	key := kdf.NewKey(100 * time.Millisecond)
 	itr := kdf.Iters()
 
-	tryKey := func(dk []byte) bool {
-		return bytes.Equal(dk, key)
+	tryKey := func(dk []byte) (bool, error) {
+		return bytes.Equal(dk, key), nil
 	}
 
 	kdf.Reset(nil, 0)
-	dk := kdf.FindKey(10*time.Millisecond, tryKey)
+	dk, _ := kdf.FindKey(10*time.Millisecond, tryKey)
 	if dk != nil {
 		t.Errorf("kdf.FindKey(50 ms) expected nil; got % x", dk)
 	}
 
 	kdf.Reset(nil, 0)
-	dk = kdf.FindKey(200*time.Millisecond, tryKey)
+	dk, _ = kdf.FindKey(200*time.Millisecond, tryKey)
 	if !bytes.Equal(dk, key) {
 		t.Errorf("kdf.FindKey(100 ms) expected % x; got % x", key, dk)
 	}

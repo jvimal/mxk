@@ -58,7 +58,7 @@ func (kdf *PBKDF2) NewKey(d time.Duration) []byte {
 // As a general rule, FindKey should be given more time than NewKey, especially
 // if the operations are being performed on different computers. If NewKey was
 // given 1 second, a reasonable limit for FindKey is 3 to 5 seconds.
-func (kdf *PBKDF2) FindKey(d time.Duration, f func(dk []byte) bool) []byte {
+func (kdf *PBKDF2) FindKey(d time.Duration, f func(dk []byte) (bool, error)) (dk []byte, err error) {
 	d = d * 2 / 3
 	ch := make(chan []byte)
 	kdf.Reset(nil, 0)
@@ -66,8 +66,9 @@ func (kdf *PBKDF2) FindKey(d time.Duration, f func(dk []byte) bool) []byte {
 		runtime.LockOSThread()
 		start := threadUtime()
 		dk := kdf.Next(1024)
-		for !f(dk) {
-			if threadUtime()-start >= d {
+		var found bool
+		for found, err = f(dk); !found; found, err = f(dk) {
+			if err != nil || threadUtime()-start >= d {
 				dk = nil
 				break
 			}
@@ -75,7 +76,8 @@ func (kdf *PBKDF2) FindKey(d time.Duration, f func(dk []byte) bool) []byte {
 		}
 		ch <- dk
 	}()
-	return <-ch
+	dk = <-ch
+	return
 }
 
 // Next runs the key derivation algorithm for c additional iterations and

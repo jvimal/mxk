@@ -28,6 +28,7 @@ func New(pass, salt []byte, dkLen int, h func() hash.Hash) *PBKDF2 {
 	if dkLen < 1 {
 		return nil
 	}
+	salt = append([]byte(nil), salt...)
 	return &PBKDF2{prf: hmac.New(h, pass), dkLen: dkLen, s: salt}
 }
 

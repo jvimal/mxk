@@ -1,5 +1,5 @@
 //
-// Written by Maxim Khitrov (September 2012)
+// Written by Maxim Khitrov (October 2012)
 //
 
 package pbkdf2
@@ -10,14 +10,24 @@ import (
 	"unsafe"
 )
 
-var (
-	modkernel32 = syscall.NewLazyDLL("kernel32.dll")
+/*
+Note: GetThreadTimes function may return inaccurate values when the calling
+thread is frequently interrupted prior to consuming all of its quantum. This
+shouldn't be a huge problem for PBKDF2 calculation since it doesn't enter any
+wait states, but some additional testing in high-load situations is needed.
 
-	procGetCurrentThread = modkernel32.NewProc("GetCurrentThread")
-	procGetThreadTimes   = modkernel32.NewProc("GetThreadTimes")
+http://blog.kalmbachnet.de/?postid=28
+http://www.tech-archive.net/Archive/Development/microsoft.public.win32.programmer.kernel/2004-10/0689.html
+*/
+
+var (
+	modkernel32 = syscall.MustLoadDLL("kernel32.dll")
+
+	procGetCurrentThread = modkernel32.MustFindProc("GetCurrentThread")
+	procGetThreadTimes   = modkernel32.MustFindProc("GetThreadTimes")
 )
 
-func threadUtime() time.Duration {
+func utime() time.Duration {
 	var u syscall.Rusage
 	h, _ := getCurrentThread()
 	err := getThreadTimes(h, &u.CreationTime, &u.ExitTime, &u.KernelTime, &u.UserTime)
@@ -41,7 +51,7 @@ func getCurrentThread() (pseudoHandle syscall.Handle, err error) {
 	return
 }
 
-func getThreadTimes(handle syscall.Handle, creationTime *syscall.Filetime, exitTime *syscall.Filetime, kernelTime *syscall.Filetime, userTime *syscall.Filetime) (err error) {
+func getThreadTimes(handle syscall.Handle, creationTime, exitTime, kernelTime, userTime *syscall.Filetime) (err error) {
 	r1, _, e1 := syscall.Syscall6(procGetThreadTimes.Addr(), 5, uintptr(handle), uintptr(unsafe.Pointer(creationTime)), uintptr(unsafe.Pointer(exitTime)), uintptr(unsafe.Pointer(kernelTime)), uintptr(unsafe.Pointer(userTime)), 0)
 	if int(r1) == 0 {
 		if e1 != 0 {

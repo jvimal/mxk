@@ -1,5 +1,5 @@
 //
-// Written by Maxim Khitrov (September 2012)
+// Written by Maxim Khitrov (October 2012)
 //
 
 package pbkdf2
@@ -7,7 +7,7 @@ package pbkdf2
 import (
 	"bytes"
 	"crypto/sha1"
-	"crypto/sha512"
+	"crypto/sha256"
 	"fmt"
 	"testing"
 	"time"
@@ -34,6 +34,8 @@ func TestRFC6070(t *testing.T) {
 			"4b 00 79 01 b7 65 48 9a be ad 49 d9 26 f7 21 d0 65 a4 29 c1"},
 		{"password", "salt", []int{4095, 1}, 20,
 			"4b 00 79 01 b7 65 48 9a be ad 49 d9 26 f7 21 d0 65 a4 29 c1"},
+		{"password", "salt", []int{1, 4094, 1}, 20,
+			"4b 00 79 01 b7 65 48 9a be ad 49 d9 26 f7 21 d0 65 a4 29 c1"},
 		//{"password", "salt", []int{16777216}, 20,
 		//	"ee fe 3d 61 cd 4d a4 e4 e9 94 5b 3d 6b a2 15 8c 26 34 e9 84"},
 		{"passwordPASSWORDpassword", "saltSALTsaltSALTsaltSALTsaltSALTsalt", []int{4096}, 25,
@@ -41,9 +43,9 @@ func TestRFC6070(t *testing.T) {
 		{"pass\x00word", "sa\x00lt", []int{4096}, 16,
 			"56 fa 6a a7 55 48 09 9d cc 37 d7 f0 34 25 e0 c3"},
 	}
+	var dk []byte
 	for _, test := range tests {
 		kdf := New([]byte(test.P), []byte(test.S), test.dkLen, sha1.New)
-		var dk []byte
 		for _, c := range test.c {
 			dk = kdf.Next(c)
 		}
@@ -54,25 +56,29 @@ func TestRFC6070(t *testing.T) {
 }
 
 func TestKeyGen(t *testing.T) {
-	kdf := New([]byte("pass"), []byte("salt"), 10, sha512.New)
-	key := kdf.NewKey(100 * time.Millisecond)
+	kdf := New([]byte("pass"), []byte("salt"), 10, sha256.New)
+	key := kdf.Derive(100 * time.Millisecond)
 	itr := kdf.Iters()
 
-	tryKey := func(dk []byte) (bool, error) {
-		return bytes.Equal(dk, key), nil
+	tryKey := func(dk []byte) error {
+		if bytes.Equal(dk, key) {
+			return KeyFound
+		}
+		return nil
 	}
 
-	kdf.Reset(nil, 0)
-	dk, _ := kdf.FindKey(10*time.Millisecond, tryKey)
-	if dk != nil {
-		t.Errorf("kdf.FindKey(50 ms) expected nil; got % x", dk)
+	d := 10 * time.Millisecond
+	dk, err := kdf.Search(d, tryKey)
+	if dk != nil || err != ErrTimeout {
+		t.Errorf("kdf.Search(%v) expected ErrTimeout; got % x (%v)", d, dk, err)
 	}
 
-	kdf.Reset(nil, 0)
-	dk, _ = kdf.FindKey(200*time.Millisecond, tryKey)
-	if !bytes.Equal(dk, key) {
-		t.Errorf("kdf.FindKey(100 ms) expected % x; got % x", key, dk)
+	d = 200 * time.Millisecond
+	dk, err = kdf.Search(d, tryKey)
+	if !bytes.Equal(dk, key) || err != nil {
+		t.Errorf("kdf.Search(%v) expected % x; got % x (%v)", d, key, dk, err)
 	}
+
 	if kdf.Iters() != itr {
 		t.Errorf("kdf.Iters() expected %v; got %v", itr, kdf.Iters())
 	}

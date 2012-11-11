@@ -29,7 +29,8 @@ type Monitor struct {
 	sLast  time.Duration // Most recent sample time (stop time when inactive)
 	sRate  time.Duration // Sampling rate
 
-	tBytes int64 // Number of bytes expected in the current transfer
+	tBytes int64         // Number of bytes expected in the current transfer
+	tLast  time.Duration // Time of the most recent transfer of at least 1 byte
 }
 
 // New creates a new flow control monitor. Instantaneous transfer rate is
@@ -58,6 +59,7 @@ func New(sampleRate, windowSize time.Duration) *Monitor {
 		rWindow: windowSize.Seconds(),
 		sLast:   now,
 		sRate:   sampleRate,
+		tLast:   now,
 	}
 }
 
@@ -85,6 +87,7 @@ func (m *Monitor) Done() int64 {
 		m.reset(now)
 	}
 	m.active = false
+	m.tLast = 0
 	n := m.bytes
 	m.mu.Unlock()
 	return n
@@ -96,6 +99,7 @@ type Status struct {
 	Active   bool          // Flag indicating an active transfer
 	Start    time.Time     // Transfer start time
 	Duration time.Duration // Time period covered by the statistics
+	Idle     time.Duration // Time since the last transfer of at least 1 byte
 	Bytes    int64         // Total number of bytes transferred
 	Samples  int64         // Total number of samples taken
 	InstRate int64         // Instantaneous transfer rate
@@ -111,11 +115,12 @@ type Status struct {
 // becomes static after a call to Done.
 func (m *Monitor) Status() Status {
 	m.mu.Lock()
-	m.update(0)
+	now := m.update(0)
 	s := Status{
 		Active:   m.active,
 		Start:    clockToTime(m.start),
 		Duration: m.sLast - m.start,
+		Idle:     now - m.tLast,
 		Bytes:    m.bytes,
 		Samples:  m.samples,
 		PeakRate: round(m.rPeak),
@@ -201,9 +206,11 @@ func (m *Monitor) SetTransferSize(bytes int64) {
 // sample is done.
 func (m *Monitor) update(n int) (now time.Duration) {
 	if !m.active {
-		return // m is frozen, time is irrelevant
+		return
 	}
-	now = clock()
+	if now = clock(); n > 0 {
+		m.tLast = now
+	}
 	m.sBytes += int64(n)
 	if sTime := now - m.sLast; sTime >= m.sRate {
 		t := sTime.Seconds()

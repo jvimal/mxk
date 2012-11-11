@@ -12,38 +12,9 @@ import (
 	"time"
 )
 
-// clockRate is the resolution and precision of clock().
-const clockRate = 20 * time.Millisecond
-
-// czero is the process start time rounded down to the nearest clockRate
-// increment.
-var czero = time.Duration(time.Now().UnixNano()) / clockRate * clockRate
-
-// clock returns a low resolution timestamp relative to the process start time.
-func clock() time.Duration {
-	return time.Duration(time.Now().UnixNano())/clockRate*clockRate - czero
-}
-
-// clockToTime converts a clock() timestamp to an absolute time.Time value.
-func clockToTime(c time.Duration) time.Time {
-	return time.Unix(0, int64(czero+c))
-}
-
-// clockRound returns d rounded to the nearest clockRate increment.
-func clockRound(d time.Duration) time.Duration {
-	return (d + clockRate>>1) / clockRate * clockRate
-}
-
-// round returns x rounded to the nearest int64 (non-negative values only).
-func round(x float64) int64 {
-	if _, frac := math.Modf(x); frac >= 0.5 {
-		return int64(math.Ceil(x))
-	}
-	return int64(math.Floor(x))
-}
-
 // Monitor monitors and limits the transfer rate of a data stream.
 type Monitor struct {
+	mu      sync.Mutex    // Mutex guarding access to all internal fields
 	active  bool          // Flag indicating an active transfer
 	start   time.Duration // Transfer start time (clock() value)
 	bytes   int64         // Total number of bytes transferred
@@ -58,7 +29,7 @@ type Monitor struct {
 	sLast  time.Duration // Most recent sample time (stop time when inactive)
 	sRate  time.Duration // Sampling rate
 
-	mu sync.Mutex // Mutex guarding access to all internal fields
+	tBytes int64 // Number of bytes expected in the current transfer
 }
 
 // New creates a new flow control monitor. Instantaneous transfer rate is
@@ -131,10 +102,13 @@ type Status struct {
 	CurRate  int64         // Current transfer rate (EMA of InstRate)
 	AvgRate  int64         // Average transfer rate (Bytes / Duration)
 	PeakRate int64         // Maximum instantaneous transfer rate
+	BytesRem int64         // Number of bytes remaining in the transfer
+	TimeRem  time.Duration // Estimated time to completion
+	Progress Percent       // Overall transfer progress
 }
 
 // Status returns current transfer status information. The returned value
-// remains fixed after a call to Done.
+// becomes static after a call to Done.
 func (m *Monitor) Status() Status {
 	m.mu.Lock()
 	m.update(0)
@@ -145,15 +119,27 @@ func (m *Monitor) Status() Status {
 		Bytes:    m.bytes,
 		Samples:  m.samples,
 		PeakRate: round(m.rPeak),
+		BytesRem: m.tBytes - m.bytes,
+		Progress: percentOf(float64(m.bytes), float64(m.tBytes)),
 	}
-	if s.Active {
-		s.InstRate = round(m.rSample)
-		s.CurRate = round(m.rEMA)
+	if s.BytesRem < 0 {
+		s.BytesRem = 0
+	}
+	if s.Duration > 0 {
+		rAvg := float64(s.Bytes) / s.Duration.Seconds()
+		s.AvgRate = round(rAvg)
+		if s.Active {
+			s.InstRate = round(m.rSample)
+			s.CurRate = round(m.rEMA)
+			if s.BytesRem > 0 {
+				if tRate := 0.8*m.rEMA + 0.2*rAvg; tRate > 0 {
+					seconds := float64(s.BytesRem) / tRate
+					s.TimeRem = clockRound(time.Duration(seconds * 1e9))
+				}
+			}
+		}
 	}
 	m.mu.Unlock()
-	if s.Duration > 0 {
-		s.AvgRate = round(float64(s.Bytes) / s.Duration.Seconds())
-	}
 	return s
 }
 
@@ -197,6 +183,17 @@ func (m *Monitor) Limit(want int, rate int64, block bool) (n int) {
 		limit = 0
 	}
 	return int(limit)
+}
+
+// SetTransferSize specifies the total size of the data transfer, which allows
+// the Monitor to calculate the overall progress and time to completion.
+func (m *Monitor) SetTransferSize(bytes int64) {
+	if bytes < 0 {
+		bytes = 0
+	}
+	m.mu.Lock()
+	m.tBytes = bytes
+	m.mu.Unlock()
 }
 
 // update accumulates the transferred byte count for the current sample until

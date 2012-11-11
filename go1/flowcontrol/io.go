@@ -13,7 +13,8 @@ import (
 // the transfer rate limit.
 var ErrLimit = errors.New("flowcontrol: transfer rate limit exceeded")
 
-// Reader implements io.Reader with a restriction on the rate of data transfer.
+// Reader implements io.ReadCloser with a restriction on the rate of data
+// transfer.
 type Reader struct {
 	io.Reader // Data source
 	*Monitor  // Flow control monitor
@@ -40,7 +41,17 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 	return
 }
 
-// Writer implements io.Writer with a restriction on the rate of data transfer.
+// Close closes the underlying reader if it implements the io.Closer interface.
+func (r *Reader) Close() error {
+	r.Done()
+	if c, ok := r.Reader.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
+}
+
+// Writer implements io.WriteCloser with a restriction on the rate of data
+// transfer.
 type Writer struct {
 	io.Writer // Data destination
 	*Monitor  // Flow control monitor
@@ -74,4 +85,13 @@ func (w *Writer) Write(p []byte) (n int, err error) {
 		n += c
 	}
 	return
+}
+
+// Close closes the underlying writer if it implements the io.Closer interface.
+func (w *Writer) Close() error {
+	w.Done()
+	if c, ok := w.Writer.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
 }

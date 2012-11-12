@@ -93,6 +93,9 @@ func (m *Monitor) Done() int64 {
 	return n
 }
 
+// timeRemLimit is the maximum Status.TimeRem value.
+const timeRemLimit = 999*time.Hour + 59*time.Minute + 59*time.Second
+
 // Status represents the current Monitor status. All transfer rates are in bytes
 // per second rounded to the nearest byte.
 type Status struct {
@@ -138,8 +141,11 @@ func (m *Monitor) Status() Status {
 			s.CurRate = round(m.rEMA)
 			if s.BytesRem > 0 {
 				if tRate := 0.8*m.rEMA + 0.2*rAvg; tRate > 0 {
-					seconds := float64(s.BytesRem) / tRate
-					s.TimeRem = clockRound(time.Duration(seconds * 1e9))
+					ns := float64(s.BytesRem) / tRate * 1e9
+					if ns > float64(timeRemLimit) {
+						ns = float64(timeRemLimit)
+					}
+					s.TimeRem = clockRound(time.Duration(ns))
 				}
 			}
 		}

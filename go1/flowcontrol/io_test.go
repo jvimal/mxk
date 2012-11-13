@@ -40,6 +40,9 @@ func TestReader(t *testing.T) {
 	r := NewReader(bytes.NewReader(in), 100)
 	start := time.Now()
 
+	// Make sure r implements Limiter
+	_ = Limiter(r)
+
 	// 1st read of 10 bytes is performed immediately
 	if n, err := r.Read(b); n != 10 || err != nil {
 		t.Fatalf("r.Read(b) expected 10 (<nil>); got %v (%v)", n, err)
@@ -48,7 +51,7 @@ func TestReader(t *testing.T) {
 	}
 
 	// No new Reads allowed in the current sample
-	r.Block = false
+	r.SetBlocking(false)
 	if n, err := r.Read(b); n != 0 || err != nil {
 		t.Fatalf("r.Read(b) expected 0 (<nil>); got %v (%v)", n, err)
 	} else if rt := time.Since(start); rt > _50ms {
@@ -58,7 +61,7 @@ func TestReader(t *testing.T) {
 	status := [6]Status{0: r.Status()} // No samples in the first status
 
 	// 2nd read of 10 bytes blocks until the next sample
-	r.Block = true
+	r.SetBlocking(true)
 	if n, err := r.Read(b[10:]); n != 10 || err != nil {
 		t.Fatalf("r.Read(b[10:]) expected 10 (<nil>); got %v (%v)", n, err)
 	} else if rt := time.Since(start); rt < _100ms {
@@ -104,8 +107,11 @@ func TestWriter(t *testing.T) {
 	w := NewWriter(&bytes.Buffer{}, 200)
 	start := time.Now()
 
+	// Make sure w implements Limiter
+	_ = Limiter(w)
+
 	// Non-blocking 20-byte write for the first sample returns ErrLimit
-	w.Block = false
+	w.SetBlocking(false)
 	if n, err := w.Write(b); n != 20 || err != ErrLimit {
 		t.Fatalf("w.Write(b) expected 20 (ErrLimit); got %v (%v)", n, err)
 	} else if rt := time.Since(start); rt > _50ms {
@@ -113,7 +119,7 @@ func TestWriter(t *testing.T) {
 	}
 
 	// Blocking 80-byte write
-	w.Block = true
+	w.SetBlocking(true)
 	if n, err := w.Write(b[20:]); n != 80 || err != nil {
 		t.Fatalf("w.Write(b[20:]) expected 80 (<nil>); got %v (%v)", n, err)
 	} else if rt := time.Since(start); rt < _400ms {

